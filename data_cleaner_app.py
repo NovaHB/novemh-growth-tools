@@ -8,16 +8,26 @@ import io
 # ============================================
 st.set_page_config(page_title="Data Cleaner Tool", page_icon="🧹", layout="wide")
 st.title("🧹 Data Cleaning Tool")
-st.caption("Upload a CSV, choose your cleaning options, and download a clean dataset.")
+st.caption("Upload a CSV or Excel file, choose your cleaning options, and download a clean dataset.")
 
 # ============================================
 # FILE UPLOAD
 # ============================================
-uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+uploaded_file = st.file_uploader("Upload your CSV or Excel file", type=["csv", "xlsx", "xls"])
 
 if uploaded_file:
     try:
-        df = pd.read_csv(uploaded_file)
+        # --- Load CSV or Excel ---
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            excel_file = pd.ExcelFile(uploaded_file)
+            if len(excel_file.sheet_names) > 1:
+                sheet = st.selectbox("Select sheet to clean", excel_file.sheet_names)
+            else:
+                sheet = excel_file.sheet_names[0]
+            df = pd.read_excel(uploaded_file, sheet_name=sheet)
+
         st.success(f"✅ File loaded — {df.shape[0]:,} rows, {df.shape[1]} columns")
 
         # Preview raw data
@@ -170,14 +180,21 @@ if uploaded_file:
                     for col in cleaned_df.columns:
                         if 'date' in col.lower() or 'time' in col.lower():
                             date_cols.append(col)
+
                     fmt_map = {
                         "YYYY-MM-DD": "%Y-%m-%d",
                         "DD/MM/YYYY": "%d/%m/%Y",
                         "MM/DD/YYYY": "%m/%d/%Y"
                     }
+
                     for col in date_cols:
-                        cleaned_df[col] = pd.to_datetime(cleaned_df[col], errors='coerce').dt.strftime(fmt_map[date_format])
-                    cleaning_log.append(f"✅ Formatted {len(date_cols)} date columns to {date_format}")
+                        # Parse to datetime first, then sort, then format
+                        parsed = pd.to_datetime(cleaned_df[col], errors='coerce', dayfirst=(date_format == "DD/MM/YYYY"))
+                        cleaned_df[col] = parsed
+                        cleaned_df = cleaned_df.sort_values(by=col).reset_index(drop=True)
+                        cleaned_df[col] = cleaned_df[col].dt.strftime(fmt_map[date_format])
+
+                    cleaning_log.append(f"✅ Formatted and sorted {len(date_cols)} date columns chronologically to {date_format}")
                 except Exception as e:
                     errors_log.append(f"❌ Date formatting failed: {str(e)}")
 
@@ -217,11 +234,9 @@ if uploaded_file:
             st.divider()
             st.subheader("📋 Cleaning Report")
 
-            # Show log
             for log in cleaning_log:
                 st.write(log)
 
-            # Show errors if any
             if errors_log:
                 st.warning("⚠️ Some steps had issues:")
                 for err in errors_log:
@@ -236,7 +251,6 @@ if uploaded_file:
             col3.metric("Columns Before", df.shape[1])
             col4.metric("Columns After", cleaned_df.shape[1], f"{cleaned_df.shape[1] - df.shape[1]}")
 
-            # Preview cleaned data
             with st.expander("👀 Preview Cleaned Data"):
                 st.dataframe(cleaned_df.head(20))
 
@@ -252,4 +266,4 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"❌ Could not read file: {str(e)}")
-        st.info("Make sure your file is a valid CSV and try again.")
+        st.info("Make sure your file is a valid CSV or Excel file and try again.")
